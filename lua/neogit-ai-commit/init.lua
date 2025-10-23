@@ -85,14 +85,45 @@ function M.generate_commit_message(bufnr)
     return
   end
 
+  -- Get all lines from the buffer to check for user input
+  local lines = get_buffer_lines(bufnr, 0, -1)
+  local comment_char = git.config.get("core.commentChar"):read() or "#"
+  local comment_pattern = "^" .. comment_char
+  
+  -- Find the first comment line and extract user input before it
+  local user_input_lines = {}
+  local first_comment_start = -1
+  
+  for i, line in ipairs(lines) do
+    if line:match(comment_pattern) then
+      first_comment_start = i - 1  -- Convert to 0-based index
+      break
+    end
+    table.insert(user_input_lines, line)
+  end
+  
+  -- Remove trailing empty lines from user input
+  while #user_input_lines > 0 and user_input_lines[#user_input_lines]:match("^%s*$") do
+    table.remove(user_input_lines)
+  end
+
   -- Join the diff lines with newlines
   local diff_content = table.concat(staged_diff, "\n")
   
   -- Debug info
   vim.notify("Diff content length: " .. #diff_content .. " characters", vim.log.levels.INFO)
 
+  vim.notify("User input lines: " .. #user_input_lines, vim.log.levels.INFO)
+
   -- Show a loading message
   vim.notify("Generating commit message...", vim.log.levels.INFO)
+
+  -- Prepare the user content to send to AI
+  local user_content = diff_content
+  if #user_input_lines > 0 then
+    local user_prefix = table.concat(user_input_lines, "\n")
+    user_content = "The user has already started writing the following commit message:\n\n" .. user_prefix .. "\n\nPlease complete or improve this commit message based on the following staged changes:\n\n" .. diff_content
+  end
 
   -- Make the API request
   local curl = require("plenary.curl")
@@ -105,7 +136,7 @@ function M.generate_commit_message(bufnr)
       model = config.model,
       messages = {
         { role = "system", content = config.system_prompt },
-        { role = "user", content = diff_content }
+        { role = "user", content = user_content }
       },
       stream = false,
     })
@@ -124,23 +155,21 @@ function M.generate_commit_message(bufnr)
 
   local commit_message = result.choices[1].message.content
 
-  -- Get all lines from the buffer
-  local lines = get_buffer_lines(bufnr, 0, -1)
+  -- Get all lines from the buffer again
+  lines = get_buffer_lines(bufnr, 0, -1)
   
-  -- Find the first comment section
-  local comment_char = git.config.get("core.commentChar"):read() or "#"
-  local first_comment_start = -1
-  local comment_pattern = "^" .. comment_char
-  
-  for i, line in ipairs(lines) do
-    if line:match(comment_pattern) then
-      first_comment_start = i - 1  -- Convert to 0-based index
-      break
+  -- Find the comment section
+  if first_comment_start == -1 then
+    for i, line in ipairs(lines) do
+      if line:match(comment_pattern) then
+        first_comment_start = i - 1
+        break
+      end
     end
   end
 
   if first_comment_start >= 0 then
-    -- Get the comment section once
+    -- Get the comment section
     local comment_lines = {}
     local in_comment = false
     
@@ -152,7 +181,6 @@ function M.generate_commit_message(bufnr)
         end
         table.insert(comment_lines, line)
       elseif in_comment then
-        -- We've found the end of the first comment block
         break
       end
     end
@@ -160,20 +188,28 @@ function M.generate_commit_message(bufnr)
     -- Clear the buffer
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
     
-    -- Insert the generated message
+    -- Insert the generated message (which already includes user's input)
     local message_lines = vim.split(commit_message, "\n")
     vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, message_lines)
     
     -- Add a blank line between message and comments if needed
-    if #message_lines > 0 and not message_lines[#message_lines]:match("^%s*$") then
-      vim.api.nvim_buf_set_lines(bufnr, #message_lines, #message_lines, false, {""})
+    if #message_lines > 0 then
+      local last_line = vim.api.nvim_buf_get_lines(bufnr, #message_lines - 1, #message_lines, false)[1]
+      if last_line and not last_line:match("^%s*$") then
+        vim.api.nvim_buf_set_lines(bufnr, #message_lines, #message_lines, false, {""})
+      end
     end
     
     -- Add the comment section
     vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, comment_lines)
   else
     -- No comments found, just set the message
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(commit_message, "\n"))
+    -- Clear the buffer
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+    
+    -- Insert the generated message (which already includes user's input)
+    local message_lines = vim.split(commit_message, "\n")
+    vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, message_lines)
   end
 
   vim.notify("Commit message generated!", vim.log.levels.INFO)
