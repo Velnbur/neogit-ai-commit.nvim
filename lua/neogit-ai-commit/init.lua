@@ -5,11 +5,13 @@ local config = {
   model = "qwen-plus",
   api_url = "https://api.openai.com/v1/chat/completions",
   max_tokens = 4096,
-  system_prompt = [[You are a specialized Git commit message generator. The user provides the result of running `git diff --cached`. Your task is to create clear, structured, and informative commit messages that follow a specific format:
+  system_prompt = [[The user provides the result of running `git diff --cached`. You suggest a conventional commit message. Don't add anything else to the response. No explanations, no notes, no markdown formatting, no code fences — output ONLY the raw commit message text.
+
+You are a specialized Git commit message generator. Your task is to create clear, structured, and informative commit messages that follow a specific format:
 
 1. First line: A concise title (60-72 characters) that summarizes the change using imperative mood
-2. Followed by a blank line
-3. Then a bulleted list of specific changes, each starting with a present-tense action verb
+2. Second line must be a blank line with no spaces
+3. Then from third line, a bulleted list of specific changes, each starting with a present-tense action verb
 
 RULES:
 - Title must be specific and descriptive
@@ -25,26 +27,47 @@ RULES:
 
 Avoid vague messages like "Fix bug" or "Update code" - be specific about what was fixed or updated.]],
 
-  system_prompt_zh = [[你是一个专业的 Git 提交信息生成器。用户提供 `git diff --cached` 的结果。你的任务是创建清晰、结构化且信息丰富的中文提交信息，遵循以下格式：
+  system_prompt_zh = [[用户提供 `git diff --cached` 的运行结果。你需要生成一个符合规范的中文提交信息。回复中不要包含其他任何内容。不要包含解释、说明、备注、markdown 格式或代码块——只输出原始的提交信息文本。
 
-1. 第一行：简洁的标题（60-72字符）概括变更内容
-2. 空一行
-3. 然后是具体变更的列表，每项以动词开头
+你是一个专门的 Git 提交信息生成器。你的任务是创建清晰、结构化且信息丰富的中文提交信息，遵循以下格式：
+
+1. 第一行：简明扼要的标题（60-72 字符），概括变更内容，使用祈使语气
+2. 第二行必须是一个空行，且不包含任何空格
+3. 然后从第三行开始是具体变更的列表，每项以现在时的动作动词开头
 
 规则：
-- 标题必须具体且描述性强
-- 标题使用祈使语气（例如："添加"、"修复"、"更新"）
-- 保持标题在 72 字符以内
-- 每个列表项应以 "- " 开头，后跟动词
-- 列表项应简洁但信息丰富，说明改变了什么以及为什么
-- 列表项总数最多 3-5 个，简单变更可以只有 1 个
-- 按重要性组织列表项
-- 突出对其他开发者重要的技术细节
-- 不要包含不必要的细节或属于文档的说明
-- 关注改变了什么（WHAT）以及为什么（WHY），而不是怎么做（HOW）
+- 标题必须具体且具有描述性
+- 标题使用祈使语气（例如："添加"、"修复"、"更新"，而不是"添加了"、"修复了"、"更新了"）
+- 标题保持在 72 字符以内
+- 每个要点应以 "- " 开头，后跟现在时的动作动词
+- 要点应简洁但能说明改变了什么以及为什么改变
+- 总要点数最多 3-5 个，简单变更只需 1 个要点
+- 按重要性组织要点
+- 突出对其他开发者相关的重要技术细节
+- 不要包含不必要的细节或不属于文档的解释
+- 专注于改变了什么（WHAT）和为什么（WHY），而不是如何（HOW）
 
-避免使用模糊的信息，如"修复 bug"或"更新代码"——要具体说明修复或更新了什么。]]
+避免使用模糊的消息，如"修复错误"或"更新代码"——要具体说明修复或更新了什么。]]
 }
+
+-- Strip markdown code fences and trailing explanatory text from AI response
+local function clean_commit_message(message)
+  -- Remove wrapping ```...``` code fences
+  message = message:gsub("^%s*```[^\n]*\n", "")
+  message = message:gsub("\n```%s*$", "")
+  message = message:gsub("^%s*```%s*$", "")
+
+  -- Trim leading/trailing whitespace
+  message = message:gsub("^%s+", ""):gsub("%s+$", "")
+
+  -- Ensure second line is truly empty (no whitespace)
+  local lines = vim.split(message, "\n")
+  if #lines >= 2 and lines[2]:match("^%s+$") then
+    lines[2] = ""
+  end
+
+  return table.concat(lines, "\n")
+end
 
 local function get_api_key()
   -- First try to get from environment variable
@@ -177,7 +200,7 @@ function M.generate_commit_message(bufnr)
     return
   end
 
-  local commit_message = result.choices[1].message.content
+  local commit_message = clean_commit_message(result.choices[1].message.content)
 
   -- Get all lines from the buffer again
   lines = get_buffer_lines(bufnr, 0, -1)
@@ -317,7 +340,7 @@ function M.generate_commit_message_in_zh(bufnr)
     return
   end
 
-  local commit_message = result.choices[1].message.content
+  local commit_message = clean_commit_message(result.choices[1].message.content)
 
   -- Get all lines from the buffer again
   lines = get_buffer_lines(bufnr, 0, -1)
