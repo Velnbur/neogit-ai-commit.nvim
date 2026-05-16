@@ -174,10 +174,6 @@ function M.generate_commit_message(bufnr)
     { role = "system", content = config.system_prompt },
     { role = "user",   content = user_content },
   }
-  -- Mistral-specific: force the model to begin its reply immediately (no preamble)
-  if config.provider == "mistral" then
-    table.insert(messages, { role = "assistant", content = "", prefix = true })
-  end
 
   local curl = require("plenary.curl")
   local response = curl.post(config.api_url, {
@@ -191,7 +187,7 @@ function M.generate_commit_message(bufnr)
       temperature = config.temperature,
       stream      = false,
     }),
-    timeout = config.timeout,
+    timeout = config.timeout * 1000,
   })
 
   if response.status ~= 200 then

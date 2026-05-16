@@ -96,7 +96,7 @@ describe("generate_commit_message", function()
     plugin.setup({
       openai_api_key = "test-key",
       confirm_send = false,
-      timeout = 30,
+      timeout = 30,  -- seconds; plugin converts to ms internally
       api_url = "https://api.openai.com/v1/chat/completions",
       api_key_env = "OPENAI_API_KEY",
     })
@@ -238,19 +238,19 @@ describe("generate_commit_message", function()
     eq("# existing comment", lines[1])
   end)
 
-  it("passes configured timeout to curl", function()
+  it("passes configured timeout to curl in milliseconds", function()
     plugin.setup({ openai_api_key = "test-key", confirm_send = false, timeout = 60 })
     local bufnr = make_buf({ "# comment" })
     plugin.generate_commit_message(bufnr)
     assert.is_not_nil(_G._curl_last_opts)
-    eq(60, _G._curl_last_opts.timeout)
+    eq(60000, _G._curl_last_opts.timeout)
   end)
 
-  it("uses default timeout of 30 when not configured", function()
+  it("uses default timeout of 30s (30000ms) when not configured", function()
     local bufnr = make_buf({ "# comment" })
     plugin.generate_commit_message(bufnr)
     assert.is_not_nil(_G._curl_last_opts)
-    eq(30, _G._curl_last_opts.timeout)
+    eq(30000, _G._curl_last_opts.timeout)
   end)
 end)
 
