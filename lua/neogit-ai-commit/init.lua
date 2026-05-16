@@ -5,6 +5,8 @@ local config = {
   model = "qwen-plus",
   api_url = "https://api.openai.com/v1/chat/completions",
   max_tokens = 4096,
+  confirm_send = true,
+  timeout = 30,
   system_prompt = [[The user provides the result of running `git diff --cached`. You suggest a conventional commit message. Don't add anything else to the response. No explanations, no notes, no markdown formatting, no code fences — output ONLY the raw commit message text.
 
 You are a specialized Git commit message generator. Your task is to create clear, structured, and informative commit messages that follow a specific format:
@@ -27,27 +29,6 @@ RULES:
 
 Avoid vague messages like "Fix bug" or "Update code" - be specific about what was fixed or updated.]],
 
-  system_prompt_zh = [[用户提供 `git diff --cached` 的运行结果。你需要生成一个符合规范的中文提交信息。回复中不要包含其他任何内容。不要包含解释、说明、备注、markdown 格式或代码块——只输出原始的提交信息文本。
-
-你是一个专门的 Git 提交信息生成器。你的任务是创建清晰、结构化且信息丰富的中文提交信息，遵循以下格式：
-
-1. 第一行：简明扼要的标题（60-72 字符），概括变更内容，使用祈使语气
-2. 第二行必须是一个空行，且不包含任何空格
-3. 然后从第三行开始是具体变更的列表，每项以现在时的动作动词开头
-
-规则：
-- 标题必须具体且具有描述性
-- 标题使用祈使语气（例如："添加"、"修复"、"更新"，而不是"添加了"、"修复了"、"更新了"）
-- 标题保持在 72 字符以内
-- 每个要点应以 "- " 开头，后跟现在时的动作动词
-- 要点应简洁但能说明改变了什么以及为什么改变
-- 总要点数最多 3-5 个，简单变更只需 1 个要点
-- 按重要性组织要点
-- 突出对其他开发者相关的重要技术细节
-- 不要包含不必要的细节或不属于文档的解释
-- 专注于改变了什么（WHAT）和为什么（WHY），而不是如何（HOW）
-
-避免使用模糊的消息，如"修复错误"或"更新代码"——要具体说明修复或更新了什么。]]
 }
 
 -- Strip markdown code fences and trailing explanatory text from AI response
@@ -97,10 +78,6 @@ local function setup_keymaps()
       vim.keymap.set({ "n", "i" }, "<C-c><C-m>", function()
         M.generate_commit_message(ev.buf)
       end, { buffer = ev.buf, desc = "Generate commit message" })
-
-      vim.keymap.set({ "n", "i" }, "<C-c>m", function()
-        M.generate_commit_message_in_zh(ev.buf)
-      end, { buffer = ev.buf, desc = "生成提交信息" })
 
       -- Print a message to confirm the keymap is set
       vim.notify("Press <C-c><C-m>) to generate commit message using AI", vim.log.levels.INFO)
@@ -156,11 +133,21 @@ function M.generate_commit_message(bufnr)
 
   -- Join the diff lines with newlines
   local diff_content = table.concat(staged_diff, "\n")
-  
-  -- Debug info
-  vim.notify("Diff content length: " .. #diff_content .. " characters", vim.log.levels.INFO)
 
-  vim.notify("User input lines: " .. #user_input_lines, vim.log.levels.INFO)
+  if not vim.startswith(config.api_url, "https://") then
+    vim.notify("Warning: api_url does not use HTTPS. The diff and API key will be sent unencrypted.", vim.log.levels.WARN)
+  end
+
+  if config.confirm_send then
+    local hostname = config.api_url:match("https?://([^/:]+)") or config.api_url
+    local choice = vim.fn.confirm(
+      "Send " .. #diff_content .. " bytes to " .. hostname .. "?",
+      "&Yes\n&No", 1)
+    if choice ~= 1 then
+      vim.notify("Commit message generation cancelled.", vim.log.levels.INFO)
+      return
+    end
+  end
 
   -- Show a loading message
   vim.notify("Generating commit message...", vim.log.levels.INFO)
@@ -186,7 +173,8 @@ function M.generate_commit_message(bufnr)
         { role = "user", content = user_content }
       },
       stream = false,
-    })
+    }),
+    timeout = config.timeout,
   })
 
   if response.status ~= 200 then
@@ -262,146 +250,6 @@ function M.generate_commit_message(bufnr)
   vim.notify("Commit message generated!", vim.log.levels.INFO)
 end
 
-
-function M.generate_commit_message_in_zh(bufnr)
-  local api_key = get_api_key()
-  if not api_key then
-    vim.notify("未找到 OpenAI API 密钥。请设置 OPENAI_API_KEY 环境变量或通过 setup() 配置", vim.log.levels.ERROR)
-    return
-  end
-
-  local git = require("neogit.lib.git")
-  local staged_diff = git.cli.diff.cached.call().stdout
-  if #staged_diff == 0 then
-    vim.notify("没有暂存的更改来生成提交信息", vim.log.levels.WARN)
-    return
-  end
-
-  -- Get all lines from the buffer to check for user input
-  local lines = get_buffer_lines(bufnr, 0, -1)
-  local comment_char = git.config.get("core.commentChar"):read() or "#"
-  local comment_pattern = "^" .. comment_char
-
-  -- Find the first comment line and extract user input before it
-  local user_input_lines = {}
-  local first_comment_start = -1
-
-  for i, line in ipairs(lines) do
-    if line:match(comment_pattern) then
-      first_comment_start = i - 1  -- Convert to 0-based index
-      break
-    end
-    table.insert(user_input_lines, line)
-  end
-
-  -- Remove trailing empty lines from user input
-  while #user_input_lines > 0 and user_input_lines[#user_input_lines]:match("^%s*$") do
-    table.remove(user_input_lines)
-  end
-
-  -- Join the diff lines with newlines
-  local diff_content = table.concat(staged_diff, "\n")
-
-  -- Show a loading message
-  vim.notify("正在生成中文提交信息...", vim.log.levels.INFO)
-
-  -- Prepare the user content to send to AI
-  local user_content = diff_content
-  if #user_input_lines > 0 then
-    local user_prefix = table.concat(user_input_lines, "\n")
-    user_content = "用户已经写下了以下提交信息：\n\n" .. user_prefix .. "\n\n请根据以下暂存的更改完成或改进此提交信息：\n\n" .. diff_content
-  end
-
-  -- Make the API request
-  local curl = require("plenary.curl")
-  local response = curl.post(config.api_url, {
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["Authorization"] = "Bearer " .. api_key
-    },
-    body = vim.fn.json_encode({
-      model = config.model,
-      messages = {
-        { role = "system", content = config.system_prompt_zh },
-        { role = "user", content = user_content }
-      },
-      stream = false,
-    })
-  })
-
-  if response.status ~= 200 then
-    vim.notify("生成提交信息失败: " .. response.body, vim.log.levels.ERROR)
-    return
-  end
-
-  local result = vim.fn.json_decode(response.body)
-  if not result or not result.choices or #result.choices == 0 then
-    vim.notify("OpenAI API 返回无效响应", vim.log.levels.ERROR)
-    return
-  end
-
-  local commit_message = clean_commit_message(result.choices[1].message.content)
-
-  -- Get all lines from the buffer again
-  lines = get_buffer_lines(bufnr, 0, -1)
-
-  -- Find the comment section
-  if first_comment_start == -1 then
-    for i, line in ipairs(lines) do
-      if line:match(comment_pattern) then
-        first_comment_start = i - 1
-        break
-      end
-    end
-  end
-
-  if first_comment_start >= 0 then
-    -- Get the comment section
-    local comment_lines = {}
-    local in_comment = false
-
-    for i = first_comment_start + 1, #lines do
-      local line = lines[i]
-      if line:match(comment_pattern) then
-        if not in_comment then
-          in_comment = true
-        end
-        table.insert(comment_lines, line)
-      elseif in_comment then
-        break
-      end
-    end
-
-    -- Clear the buffer
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
-
-    -- Insert the generated message (which already includes user's input)
-    local message_lines = vim.split(commit_message, "\n")
-    vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, message_lines)
-
-    -- Add a blank line between message and comments if needed
-    if #message_lines > 0 then
-      local last_line = vim.api.nvim_buf_get_lines(bufnr, #message_lines - 1, #message_lines, false)[1]
-      if last_line and not last_line:match("^%s*$") then
-        vim.api.nvim_buf_set_lines(bufnr, #message_lines, #message_lines, false, {""})
-      end
-    end
-
-    -- Add the comment section
-    vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, comment_lines)
-  else
-    -- No comments found, just set the message
-    -- Clear the buffer
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
-
-    -- Insert the generated message (which already includes user's input)
-    local message_lines = vim.split(commit_message, "\n")
-    vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, message_lines)
-  end
-
-  vim.notify("提交信息已生成！", vim.log.levels.INFO)
-end
-
 -- Function to get current buffer if it's a commit message buffer
 local function get_commit_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -424,17 +272,9 @@ local function create_commands()
     desc = "Generate AI-powered commit message"
   })
 
-  vim.api.nvim_create_user_command("NeogitAICommitZh", function()
-    local bufnr = get_commit_buffer()
-    if not bufnr then
-      vim.notify("此命令只能在 git 提交信息缓冲区中使用", vim.log.levels.ERROR)
-      return
-    end
-    M.generate_commit_message_in_zh(bufnr)
-  end, {
-    desc = "生成 AI 驱动的中文提交信息"
-  })
 end
+
+M._clean_commit_message = clean_commit_message
 
 function M.setup(opts)
   opts = opts or {}
