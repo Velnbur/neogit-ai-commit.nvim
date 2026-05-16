@@ -19,29 +19,24 @@ local config = {
   model = "qwen-plus",
   api_url = "https://api.openai.com/v1/chat/completions",
   max_tokens = 4096,
+  temperature = 0.2,
   confirm_send = true,
   timeout = 30,
-  system_prompt = [[The user provides the result of running `git diff --cached`. You suggest a conventional commit message. Don't add anything else to the response. No explanations, no notes, no markdown formatting, no code fences — output ONLY the raw commit message text.
+  system_prompt = [[Output only the raw commit message text — no explanations, no markdown, no code fences.
 
-You are a specialized Git commit message generator. Your task is to create clear, structured, and informative commit messages that follow a specific format:
+You are a Git commit message generator. Given a staged diff, produce one commit message in this exact format:
 
-1. First line: A concise title (60-72 characters) that summarizes the change using imperative mood
-2. Second line must be a blank line with no spaces
-3. Then from third line, a bulleted list of specific changes, each starting with a present-tense action verb
+1. Subject line: under 72 characters, imperative mood, specific and descriptive
+2. Second line: blank (no spaces)
+3. Body: 1–5 bullet points, each starting with "- " followed by an imperative verb
 
 RULES:
-- Title must be specific and descriptive
-- Use imperative mood in title (e.g., "Add", "Fix", "Update", not "Added", "Fixed", "Updated")
-- Keep the title under 72 characters
-- Each bullet point should start with "- " followed by a present-tense action verb
-- Bullet points should be concise but informative about what changed and why
-- Keep total bullet points at most 3-5, for simple changes 1 bullet point
-- Organize bullet points in order of importance
-- Highlight important technical details that would be relevant to other developers
-- Do not include unnecessary details or explanations that belong in documentation
-- Focus on WHAT changed and WHY, not HOW
-
-Avoid vague messages like "Fix bug" or "Update code" - be specific about what was fixed or updated.]],
+- Use imperative mood throughout (Add, Fix, Remove — not Added, Fixed, Removed)
+- Each bullet point should start with "- " followed by an imperative verb (Add, Fix, Remove, Update…)
+- Focus on what changed and why, not how
+- For simple changes, one bullet point is enough; use up to 5 for complex ones
+- Organize bullets in order of importance
+- Bad subject: "Fix bug" — Good subject: "Fix null pointer in session teardown"]],
 
 }
 
@@ -175,6 +170,15 @@ function M.generate_commit_message(bufnr)
   end
 
   -- Make the API request
+  local messages = {
+    { role = "system", content = config.system_prompt },
+    { role = "user",   content = user_content },
+  }
+  -- Mistral-specific: force the model to begin its reply immediately (no preamble)
+  if config.provider == "mistral" then
+    table.insert(messages, { role = "assistant", content = "", prefix = true })
+  end
+
   local curl = require("plenary.curl")
   local response = curl.post(config.api_url, {
     headers = {
@@ -182,12 +186,10 @@ function M.generate_commit_message(bufnr)
       ["Authorization"] = "Bearer " .. api_key
     },
     body = vim.fn.json_encode({
-      model = config.model,
-      messages = {
-        { role = "system", content = config.system_prompt },
-        { role = "user", content = user_content }
-      },
-      stream = false,
+      model       = config.model,
+      messages    = messages,
+      temperature = config.temperature,
+      stream      = false,
     }),
     timeout = config.timeout,
   })
