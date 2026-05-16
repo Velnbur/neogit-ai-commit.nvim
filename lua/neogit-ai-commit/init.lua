@@ -1,7 +1,21 @@
 local M = {}
 
+local providers = {
+  openai = {
+    api_url     = "https://api.openai.com/v1/chat/completions",
+    model       = "gpt-4o-mini",
+    api_key_env = "OPENAI_API_KEY",
+  },
+  mistral = {
+    api_url     = "https://api.mistral.ai/v1/chat/completions",
+    model       = "mistral-small-latest",
+    api_key_env = "MISTRAL_API_KEY",
+  },
+}
+
 local config = {
-  openai_api_key = nil, -- Will be read from env var OPENAI_API_KEY if not set
+  openai_api_key = nil, -- Will be read from env var specified by api_key_env if not set
+  api_key_env = "OPENAI_API_KEY",
   model = "qwen-plus",
   api_url = "https://api.openai.com/v1/chat/completions",
   max_tokens = 4096,
@@ -51,13 +65,10 @@ local function clean_commit_message(message)
 end
 
 local function get_api_key()
-  -- First try to get from environment variable
-  local env_key = vim.env.OPENAI_API_KEY
+  local env_key = vim.env[config.api_key_env or "OPENAI_API_KEY"]
   if env_key and env_key ~= "" then
     return env_key
   end
-  
-  -- Fallback to configured key
   return config.openai_api_key
 end
 
@@ -98,7 +109,11 @@ end
 function M.generate_commit_message(bufnr)
   local api_key = get_api_key()
   if not api_key then
-    vim.notify("OpenAI API key not found. Please set OPENAI_API_KEY environment variable or configure via setup()", vim.log.levels.ERROR)
+    vim.notify(
+      "API key not found. Set the " .. (config.api_key_env or "OPENAI_API_KEY")
+        .. " environment variable or configure openai_api_key via setup()",
+      vim.log.levels.ERROR
+    )
     return
   end
 
@@ -275,10 +290,15 @@ local function create_commands()
 end
 
 M._clean_commit_message = clean_commit_message
+M._get_api_key = get_api_key
 
 function M.setup(opts)
   opts = opts or {}
+  if opts.provider and providers[opts.provider] then
+    config = vim.tbl_deep_extend("force", config, providers[opts.provider])
+  end
   config = vim.tbl_deep_extend("force", config, opts)
+  M._config = config
   setup_keymaps()
   create_commands()
 end

@@ -92,8 +92,14 @@ describe("generate_commit_message", function()
   before_each(function()
     _G._curl_fixture = nil
     _G._curl_last_opts = nil
-    -- Restore default setup (confirm_send off, default timeout)
-    plugin.setup({ openai_api_key = "test-key", confirm_send = false })
+    -- Restore default setup (confirm_send off, default timeout, default url)
+    plugin.setup({
+      openai_api_key = "test-key",
+      confirm_send = false,
+      timeout = 30,
+      api_url = "https://api.openai.com/v1/chat/completions",
+      api_key_env = "OPENAI_API_KEY",
+    })
     vim.fn.confirm = function() return 1 end
   end)
 
@@ -245,5 +251,49 @@ describe("generate_commit_message", function()
     plugin.generate_commit_message(bufnr)
     assert.is_not_nil(_G._curl_last_opts)
     eq(30, _G._curl_last_opts.timeout)
+  end)
+end)
+
+-- ---------------------------------------------------------------------------
+-- provider presets
+-- ---------------------------------------------------------------------------
+
+describe("provider presets", function()
+  after_each(function()
+    -- Restore default setup so other tests are unaffected
+    plugin.setup({ openai_api_key = "test-key", confirm_send = false })
+  end)
+
+  it("mistral preset sets correct api_url and model", function()
+    plugin.setup({ provider = "mistral", openai_api_key = "test-key", confirm_send = false })
+    eq("https://api.mistral.ai/v1/chat/completions", plugin._config.api_url)
+    eq("mistral-small-latest", plugin._config.model)
+    eq("MISTRAL_API_KEY", plugin._config.api_key_env)
+  end)
+
+  it("mistral preset reads MISTRAL_API_KEY from environment", function()
+    vim.env.MISTRAL_API_KEY = "mk-test-key"
+    plugin.setup({ provider = "mistral", confirm_send = false })
+    eq("mk-test-key", plugin._get_api_key())
+    vim.env.MISTRAL_API_KEY = nil
+  end)
+
+  it("user opts override provider preset", function()
+    plugin.setup({ provider = "mistral", model = "mistral-large-latest",
+                   openai_api_key = "test-key", confirm_send = false })
+    eq("mistral-large-latest", plugin._config.model)
+    eq("https://api.mistral.ai/v1/chat/completions", plugin._config.api_url)
+  end)
+
+  it("openai preset sets correct api_url", function()
+    plugin.setup({ provider = "openai", openai_api_key = "test-key", confirm_send = false })
+    eq("https://api.openai.com/v1/chat/completions", plugin._config.api_url)
+    eq("OPENAI_API_KEY", plugin._config.api_key_env)
+  end)
+
+  it("no provider leaves existing config untouched", function()
+    plugin.setup({ openai_api_key = "test-key", confirm_send = false,
+                   api_url = "https://custom.example.com/v1/chat/completions" })
+    eq("https://custom.example.com/v1/chat/completions", plugin._config.api_url)
   end)
 end)

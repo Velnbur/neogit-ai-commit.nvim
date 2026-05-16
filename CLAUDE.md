@@ -13,7 +13,14 @@ nvim --headless --noplugin -u tests/minimal_init.lua \
   -c "PlenaryBustedFile tests/neogit_ai_commit_spec.lua" -c "qa!"
 ```
 
-Requires plenary.nvim installed via lazy.nvim (standard `~/.local/share/nvim/lazy/plenary.nvim`).
+On NixOS/nixvim, `nvim` may be an alias that wraps sops — use the full binary path instead:
+
+```bash
+/etc/profiles/per-user/$USER/bin/nvim --headless --noplugin -u tests/minimal_init.lua \
+  -c "PlenaryBustedFile tests/neogit_ai_commit_spec.lua" -c "qa!"
+```
+
+`tests/minimal_init.lua` locates plenary by globbing the packpath (works for nixvim where plenary lives under the Nix store's vim-pack-dir). No lazy.nvim required.
 
 ## Architecture
 
